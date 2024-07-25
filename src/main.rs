@@ -113,7 +113,11 @@ fn new() -> Self {
         println!("Loaded in memory DB");
     } else {
         println!("The 'items' table does not exist, creating it in-memory");
-        // TODO: tags? broader categories beyond the name?
+        // TODO: tags:
+        // items table: remove price, now only a list of items (database copy of the items rules file)
+        // tags table (tag_id, tag_name)
+        // items_tags table (item_id, tag_id), links tags to items
+        // purchases table (id, item_id, price, date), this is the new 'running' table
         s.db.execute(
             "CREATE TABLE items (
                     id       INTEGER PRIMARY KEY AUTOINCREMENT,
