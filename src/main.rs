@@ -106,7 +106,7 @@ fn new() -> Self {
         println!("Loaded in memory DB");
     } else {
         println!("The 'items' table does not exist, creating it in-memory");
-        // Create a table.
+        // TODO: tags? broader categories beyond the name?
         s.db.execute(
             "CREATE TABLE items (
                     id       INTEGER PRIMARY KEY AUTOINCREMENT,
