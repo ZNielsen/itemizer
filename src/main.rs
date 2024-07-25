@@ -15,7 +15,7 @@ struct Itemizer {
     items: ItemDicts,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Item {
     code: u64,
     desc: String,
@@ -219,6 +219,9 @@ fn load_items() -> ItemDicts {
     let dict_file = env::var("ITEMIZER_ITEMS_FILE").expect("Env var not found: ITEMIZER_ITEMS_FILE");
     let text = std::fs::read_to_string(dict_file).unwrap();
     for group in text.split("\n\n") {
+        if group.contains("code:\ndesc:\nname:") || group.starts_with("//") {
+            continue;
+        }
         let mut item = Item::new();
         let settings: Vec<&str> = group.lines().collect();
         for setting in settings {
@@ -231,6 +234,9 @@ fn load_items() -> ItemDicts {
                 "excl" => item.excl = val.trim_start_matches(":").parse().unwrap(),
                 _ => panic!("Unexpected setting key: {}", key),
             }
+        }
+        if codes.contains_key(&item.code) || descr.contains_key(&item.desc) {
+            println!("WARNING: duplicate item found in rules list: [{:?}]", item);
         }
         codes.insert(item.code, item.clone());
         descr.insert(item.desc.clone(), item);
