@@ -50,14 +50,14 @@ impl Receipt {
     fn new(text: String) -> Self {
         let store = if text.to_lowercase().contains("fredmeyer") {
             ReceiptType::FredMeyer
-        } else if text.to_lowercase().contains("costco") {
+        } else if text.to_lowercase().contains("wholesale") {
             ReceiptType::Costco
         } else {
             panic!("Could not recognize receipt type: {}", text);
         };
 
         let pattern = match store {
-            ReceiptType::Costco => r"",
+            ReceiptType::Costco => r"(\d+) ([\w -]+) (\d?\d\.\d\d)",
             ReceiptType::FredMeyer => r"(\d+) ([\w ]+) (\d?\d\.\d\d) F",
         };
         let re = Regex::new(pattern).unwrap();
@@ -66,13 +66,17 @@ impl Receipt {
     }
     fn get_fields(&self, line: &str) -> Option<(u64, String, f64)> {
         if let Some(caps) = self.re.captures(line) {
+            println!(
+                "got fields from line: [{}], [{}], [{}]",
+                caps[1].to_owned(), caps[2].to_owned(), caps[3].to_owned()
+            );
             Some((
-                caps[0].parse().unwrap(),
-                caps[1].to_owned(),
-                caps[2].parse().unwrap()
+                caps[1].parse().unwrap(),
+                caps[2].to_owned(),
+                caps[3].parse().unwrap()
             ))
         } else {
-            println!("Not a regex item: [{}]", line);
+            println!("No regex match on line: [{}]", line);
             None
         }
     }
@@ -82,6 +86,7 @@ fn main() {
     let mut itemizer = Itemizer::new();
     let image_dir = env::var("ITEMIZER_IMAGE_DIR").expect("Env var not found: ITEMIZER_IMAGE_DIR");
     let res = itemizer.scan_files_in_dir(Path::new(&image_dir));
+    // TODO: Save database to file
     if let Err(e) = res {
         panic!("{:?}", e);
     }
@@ -159,10 +164,7 @@ fn scan_files_in_dir(&mut self, dir: &Path) -> Result<(), Box<dyn std::error::Er
         // TODO: Delete upscaled image
 
 
-        // TODO:
         let receipt = Receipt::new(text);
-        // Grab the itemized part. bounded by receipt type?
-
         for line in receipt.text.lines() {
             let Some((code, desc, price)) = receipt.get_fields(line) else {
                 continue;
@@ -186,7 +188,8 @@ fn scan_files_in_dir(&mut self, dir: &Path) -> Result<(), Box<dyn std::error::Er
                     ),
                 )?;
             } else {
-                panic!("Could not find entry: {}", line);
+                // panic!("Could not find entry: {}", line);
+                println!("Could not find entry: {}", line);
                 // TODO: Ask for manual input, append to file
             }
         }
