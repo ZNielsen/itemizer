@@ -4,6 +4,7 @@
     "Tesseract",
     "descr",
     "imageops",
+    "rusqlite",
     "upscaled"
   ]
 }
