@@ -42,15 +42,17 @@ enum ReceiptType {
     Costco
 }
 struct Receipt {
-    store: ReceiptType,
     text: String,
     re: Regex,
 }
 impl Receipt {
     fn new(text: String) -> Self {
-        let store = if text.to_lowercase().contains("fredmeyer") {
+        let fm_list = ["fredmeyer", "fred meyer"];
+        let co_list = ["costco", "wholesale"];
+        let lower_text = text.to_lowercase();
+        let store = if fm_list.iter().any(|&s| lower_text.contains(s)) {
             ReceiptType::FredMeyer
-        } else if text.to_lowercase().contains("wholesale") {
+        } else if co_list.iter().any(|&s| lower_text.contains(s)) {
             ReceiptType::Costco
         } else {
             panic!("Could not recognize receipt type: {}", text);
@@ -62,7 +64,7 @@ impl Receipt {
         };
         let re = Regex::new(pattern).unwrap();
 
-        Self { store, text, re }
+        Self { text, re }
     }
     fn get_fields(&self, line: &str) -> Option<(u64, String, f64)> {
         if let Some(caps) = self.re.captures(line) {
