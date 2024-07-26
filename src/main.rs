@@ -12,17 +12,17 @@ use std::io::Write;
 
 struct Itemizer {
     db: Connection,
-    items: ItemDicts,
+    // rules: ItemDicts,
 }
 
 #[derive(Clone, Debug)]
-struct Item {
+struct ItemRule {
     code: u64,
     desc: String,
     name: String,
     excl: bool,
 }
-impl Item {
+impl ItemRule {
     fn new() -> Self {
         Self {
             code: 0,
@@ -33,8 +33,8 @@ impl Item {
     }
 }
 struct ItemDicts {
-    codes: HashMap<u64, Item>,
-    descr: HashMap<String, Item>
+    codes: HashMap<u64, ItemRule>,
+    descr: HashMap<String, ItemRule>
 }
 
 enum ReceiptType {
@@ -88,7 +88,6 @@ fn main() {
     let mut itemizer = Itemizer::new();
     let image_dir = env::var("ITEMIZER_IMAGE_DIR").expect("Env var not found: ITEMIZER_IMAGE_DIR");
     let res = itemizer.scan_files_in_dir(Path::new(&image_dir));
-    // TODO: Save database to file
     if let Err(e) = res {
         panic!("{:?}", e);
     }
@@ -96,13 +95,14 @@ fn main() {
 
 impl Itemizer{
     fn new() -> Self {
+        let db_path = env::var("ITEMIZER_DB").expect("Env var not found: ITEMIZER_DB");
         let s = Self {
-            db: Connection::open_in_memory().unwrap(),
-            items: load_items(),
+            db: Connection::open(db_path).unwrap(),
+            // rules: load_rules(),
         };
 
 
-        let tables = ["items", "tags", "item_tags", "purchases"];
+        let tables = ["items", "tags", "items_tags", "purchases"];
         for table in tables {
             let table_exists: bool = s.db.query_row(
                 &format!("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='{}')", table),
@@ -111,50 +111,69 @@ impl Itemizer{
             ).unwrap();
             if !table_exists {
                 println!("The '{}' table does not exist, creating all tables", table);
-                s.create_tables();
+                s.create_table(table);
             }
         }
+
+        // Update all items from rules file
+        // {
+        //     let mut stmt = s.db.prepare("INSERT INTO items (code, desc, name, excl) VALUES (?, ?, ?, ?)").unwrap();
+        //     for (_, rule) in s.rules.codes.clone() {
+        //         stmt.execute(params![rule.code, rule.desc, rule.name, rule.excl]).unwrap();
+        //     }
+        // }
 
         s
     }
 
-    fn create_tables(&self) {
-        self.db.execute(
-            "CREATE TABLE items (
-                    item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    code    INTEGER,
-                    name    TEXT NOT NULL,
-                )",
-            [],
-        ).unwrap();
-        self.db.execute(
-            "CREATE TABLE tags (
-                    tag_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tag_name TEXT NOT NULL UNIQUE
-                )",
-            [],
-        ).unwrap();
-        self.db.execute(
-            "CREATE TABLE items_tags (
-                    item_id INTEGER,
-                    tag_id  INTEGER,
-                    FOREIGN KEY (item_id) REFERENCES items(item_id),
-                    FOREIGN KEY (tag_id)  REFERENCES tags(tag_id),
-                    PRIMARY KEY (item_id, tag_id)
-                )",
-            [],
-        ).unwrap();
-        self.db.execute(
-            "CREATE TABLE purchases (
-                    purchase_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                    item_id       INTEGER,
-                    price         REAL,
-                    purchase_date TIMESTAMP,
-                    FOREIGN KEY (item_id) REFERENCES items(item_id)
-                )",
-            [],
-        ).unwrap();
-
+    fn create_table(&self, table: &str) {
+        match table {
+            "items" => {
+                self.db.execute(
+                    "CREATE TABLE items (
+                            code INTEGER PRIMARY KEY,
+                            desc TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            excl INTEGER DEFAULT 0
+                        )",
+                    [],
+                ).unwrap();
+            }
+            "tags" => {
+                self.db.execute(
+                    "CREATE TABLE tags (
+                            tag_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                            tag_name TEXT NOT NULL UNIQUE
+                        )",
+                    [],
+                ).unwrap();
+            }
+            "items_tags" => {
+                self.db.execute(
+                    "CREATE TABLE items_tags (
+                            item_name TEXT,
+                            tag_id    INTEGER,
+                            FOREIGN KEY (item_NAME) REFERENCES items(name),
+                            FOREIGN KEY (tag_id)  REFERENCES tags(tag_id),
+                            PRIMARY KEY (item_name, tag_id)
+                        )",
+                    [],
+                ).unwrap();
+            }
+            "purchases" => {
+                self.db.execute(
+                    "CREATE TABLE purchases (
+                            purchase_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                            item_id       INTEGER,
+                            price         REAL,
+                            purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (item_id) REFERENCES items(item_id)
+                        )",
+                    [],
+                ).unwrap();
+            }
+            _ => panic!(),
+        }
     }
 
     fn scan_files_in_dir(&mut self, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,21 +220,13 @@ impl Itemizer{
                 let Some((code, desc, price)) = receipt.get_fields(line) else {
                     continue;
                 };
-                if self.items.codes.contains_key(&code) {
+
+                // TODO: Query to get the item_id here
+                if false {
                     self.db.execute(
-                        "INSERT INTO items (code, name, price) VALUES (?1, ?2, ?3)",
+                        "INSERT INTO purchases (item_id, price) VALUES (?1, ?2)",
                         (
-                            &code,
-                            &self.items.codes[&code].name,
-                            &price,
-                        ),
-                    )?;
-                } else if self.items.descr.contains_key(&desc) {
-                    self.db.execute(
-                        "INSERT INTO items (code, name, price) VALUES (?1, ?2, ?3)",
-                        (
-                            &self.items.descr[&desc].code,
-                            &self.items.descr[&desc].name,
+                            &item_id,
                             &price,
                         ),
                     )?;
@@ -247,17 +258,17 @@ fn image_done(image: &str) -> bool {
     false
 }
 
-fn load_items() -> ItemDicts {
+fn load_rules() -> ItemDicts {
     let mut codes = HashMap::new();
     let mut descr = HashMap::new();
 
-    let dict_file = env::var("ITEMIZER_ITEMS_FILE").expect("Env var not found: ITEMIZER_ITEMS_FILE");
+    let dict_file = env::var("ITEMIZER_RULES_FILE").expect("Env var not found: ITEMIZER_RULES_FILE");
     let text = std::fs::read_to_string(dict_file).unwrap();
     for group in text.split("\n\n") {
         if group.contains("code:\ndesc:\nname:") || group.starts_with("//") {
             continue;
         }
-        let mut item = Item::new();
+        let mut item = ItemRule::new();
         let settings: Vec<&str> = group.lines().collect();
         for setting in settings {
             let split = setting.find(":").unwrap();
