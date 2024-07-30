@@ -221,20 +221,30 @@ impl Itemizer{
                     continue;
                 };
 
-                // TODO: Query to get the item_id here
-                if false {
-                    self.db.execute(
-                        "INSERT INTO purchases (item_id, price) VALUES (?1, ?2)",
-                        (
-                            &item_id,
-                            &price,
-                        ),
-                    )?;
+                // Get the item code - fall back on looking up by description
+                let mut stmt = self.db.prepare("SELECT COUNT(*) FROM items WHERE code = ?1").unwrap();
+                let count: i32 = stmt.query_row(params![code], |row| row.get(0)).unwrap();
+
+                let item_code = if count > 0 {
+                    code
                 } else {
-                    // panic!("Could not find entry: {}", line);
-                    println!("Could not find entry: {}", line);
-                    // TODO: Ask for manual input, append to file
-                }
+                    match stmt.query_row(params!["desc", desc], |row| row.get(0)) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            // TODO: Ask for manual input, append to file
+                            println!("Could not find entry: {}", line);
+                            panic!("No item for code/desc [{}]/[{}]: {}", code, desc, e);
+                        }
+                    }
+                };
+
+                self.db.execute(
+                    "INSERT INTO purchases (item_id, price) VALUES (?1, ?2)",
+                    (
+                        &item_code,
+                        &price,
+                    ),
+                )?;
             }
 
             let done_file = env::var("ITEMIZER_IMAGE_DONE_FILE").expect("Env var not found: ITEMIZER_IMAGE_DONE_FILE");
