@@ -87,10 +87,7 @@ impl Receipt {
 fn main() {
     let mut itemizer = Itemizer::new();
     let image_dir = env::var("ITEMIZER_IMAGE_DIR").expect("Env var not found: ITEMIZER_IMAGE_DIR");
-    let res = itemizer.scan_files_in_dir(Path::new(&image_dir));
-    if let Err(e) = res {
-        panic!("{:?}", e);
-    }
+    itemizer.scan_files_in_dir(Path::new(&image_dir));
 }
 
 impl Itemizer{
@@ -131,7 +128,8 @@ impl Itemizer{
             "items" => {
                 self.db.execute(
                     "CREATE TABLE items (
-                            code INTEGER PRIMARY KEY,
+                            item_id INTEGER PRIMARY KEY,
+                            code INTEGER UNIQUE,
                             desc TEXT NOT NULL,
                             name TEXT NOT NULL,
                             excl INTEGER DEFAULT 0
@@ -151,11 +149,11 @@ impl Itemizer{
             "items_tags" => {
                 self.db.execute(
                     "CREATE TABLE items_tags (
-                            item_name TEXT,
-                            tag_id    INTEGER,
-                            FOREIGN KEY (item_NAME) REFERENCES items(name),
+                            item_id  INTEGER,
+                            tag_id   INTEGER,
+                            FOREIGN KEY (item_id) REFERENCES items(item_id),
                             FOREIGN KEY (tag_id)  REFERENCES tags(tag_id),
-                            PRIMARY KEY (item_name, tag_id)
+                            PRIMARY KEY (item_id, tag_id)
                         )",
                     [],
                 ).unwrap();
@@ -176,12 +174,12 @@ impl Itemizer{
         }
     }
 
-    fn scan_files_in_dir(&mut self, dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fn scan_files_in_dir(&mut self, dir: &Path) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let entry_path = entry.path();
             if entry.file_type().unwrap().is_dir() {
-                self.scan_files_in_dir(&entry_path)?;
+                self.scan_files_in_dir(&entry_path);
                 continue;
             }
             let entry_str = entry_path.as_os_str().to_str().unwrap();
@@ -191,21 +189,25 @@ impl Itemizer{
             }
 
             println!("About to open: {:?}", &entry_path);
-            let img = image::open(&entry_path).unwrap();
-            let (width, height) = img.dimensions();
-            println!("About to upscale: {:?}", &entry_path);
-            let upscale = 1.5;
-            let new_width = (width as f32 * upscale) as u32;
-            let new_height = (height as f32 * upscale) as u32;
-            // Resize the image using the Lanczos3 filter
-            let resized_img = image::imageops::resize(&img, new_width, new_height, FilterType::Lanczos3);
             let resized_path =
                 [env::var("ITEMIZER_UPSCALED_IMAGE_DIR").expect("Env var not found: ITEMIZER_UPSCALED_IMAGE_DIR"),
                 entry.file_name().into_string().unwrap()]
                     .join("/");
-            println!("About to save upscaled to: {}", &resized_path);
-            resized_img.save(&resized_path).unwrap();
-            println!("Image has been upscaled and saved successfully.");
+            if std::fs::metadata(&resized_path).is_ok() {
+                println!("Already upscaled [{}], moving on", resized_path);
+            } else {
+                let img = image::open(&entry_path).unwrap();
+                let (width, height) = img.dimensions();
+                println!("About to upscale: {:?}", &entry_path);
+                let upscale = 1.5;
+                let new_width = (width as f32 * upscale) as u32;
+                let new_height = (height as f32 * upscale) as u32;
+                // Resize the image using the Lanczos3 filter
+                let resized_img = image::imageops::resize(&img, new_width, new_height, FilterType::Lanczos3);
+                println!("About to save upscaled to: {}", &resized_path);
+                resized_img.save(&resized_path).unwrap();
+                println!("Image has been upscaled and saved successfully.");
+            }
 
             let tess = Tesseract::new(None, Some("eng")).unwrap();
             let mut tess = tess.set_image(&resized_path).unwrap();
@@ -221,19 +223,34 @@ impl Itemizer{
                     continue;
                 };
 
-                // Get the item code - fall back on looking up by description
-                let mut stmt = self.db.prepare("SELECT COUNT(*) FROM items WHERE code = ?1").unwrap();
-                let count: i32 = stmt.query_row(params![code], |row| row.get(0)).unwrap();
+                // // Get the item code - fall back on looking up by description
+                // let mut stmt = self.db.prepare("SELECT COUNT(*) FROM items WHERE code = ?1").unwrap();
+                // let count: i32 = stmt.query_row(params![code], |row| row.get(0)).unwrap();
 
-                let item_code = if count > 0 {
-                    code
-                } else {
-                    match stmt.query_row(params!["desc", desc], |row| row.get(0)) {
-                        Ok(id) => id,
-                        Err(e) => {
-                            // TODO: Ask for manual input, append to file
-                            println!("Could not find entry: {}", line);
-                            panic!("No item for code/desc [{}]/[{}]: {}", code, desc, e);
+                println!("Checking for [{}], [{}]", code, desc);
+                let mut stmt = self.db.prepare("SELECT item_id FROM items WHERE code = ?1").unwrap();
+                let item_id = match stmt.query_row(params![code], |row| row.get(0)) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        println!("could not find code: [{}]", e);
+                        let mut stmt = self.db.prepare("SELECT item_id FROM items WHERE desc = ?1").unwrap();
+                        match stmt.query_row(params![desc], |row| row.get(0)) {
+                            Ok(id) => id,
+                            Err(_) => {
+                                // TODO: Ask for manual input, append to file
+                                println!("Could not find entry: {}", line);
+                                // panic!("No item for code/desc [{}]/[{}]: {}", code, desc, e);
+                                // Insert into items table so I just have to backfill name
+                                self.db.execute(
+                                    "INSERT INTO items (code, desc, name) VALUES (?1, ?2, ?3)",
+                                    (
+                                        &code,
+                                        &desc,
+                                        ""
+                                    ),
+                                ).unwrap();
+                                self.db.last_insert_rowid()
+                            }
                         }
                     }
                 };
@@ -241,19 +258,18 @@ impl Itemizer{
                 self.db.execute(
                     "INSERT INTO purchases (item_id, price) VALUES (?1, ?2)",
                     (
-                        &item_code,
+                        &item_id,
                         &price,
                     ),
-                )?;
+                ).unwrap();
             }
 
             let done_file = env::var("ITEMIZER_IMAGE_DONE_FILE").expect("Env var not found: ITEMIZER_IMAGE_DONE_FILE");
             let mut done_fp = OpenOptions::new()
                 .append(true)
-                .open(done_file)?;
-            writeln!(done_fp, "{}", entry_str)?;
+                .open(done_file).unwrap();
+            writeln!(done_fp, "{}", entry_str).unwrap();
         }
-        Ok(())
     }
 }
 
