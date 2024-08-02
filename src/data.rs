@@ -374,11 +374,65 @@ impl FileItemizer {
         (price_max, name_max, tags_max)
     }
 
-    pub fn totals(&self) {
+    pub fn print_totals(&self) {
+        println!("\n===========================================================\n");
+        self.print_totals_by_name();
+        println!("\n===========================================================\n");
+        println!("\n===========================================================\n");
+        self.print_totals_by_tag();
+        println!("\n===========================================================\n");
     }
-    pub fn totals_by_name(&self) {
+    pub fn print_totals_by_name(&self) {
+        let mut total: f64 = 0.0;
+        let mut tot: HashMap<&str, f64> = HashMap::new();
+        for p in &self.purchases.0 {
+            if p.tags.contains(&"EXCLUDE".to_owned()) { continue; }
+            tot.entry(&p.name).and_modify(|val| *val += p.price).or_insert(p.price);
+            total += p.price;
+        }
+
+        let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k,v)).collect();
+        vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let mut price_max = 10;
+        let mut name_max = 0;
+        for item in &vec {
+            price_max = max(price_max, item.1.to_string().len());
+            name_max = max(name_max, item.0.len());
+        }
+        println!("Totals by name: {:.2}", total);
+        for item in vec {
+            println!("{:>price_max$.2} | {:<name_max$}", item.1, item.0);
+        }
     }
-    pub fn totals_by_tag(&self) {
+    pub fn print_totals_by_tag(&self) {
+        let mut total: f64 = 0.0;
+        let mut tot: HashMap<&str, f64> = HashMap::new();
+        for p in &self.purchases.0 {
+            if p.tags.is_empty() || p.tags.contains(&"EXCLUDE".to_owned()) {
+                continue;
+            }
+
+            for tag in &p.tags {
+                if tag == "" { continue; }
+                tot.entry(&tag).and_modify(|val| *val += p.price).or_insert(p.price);
+                total += p.price;
+            }
+        }
+
+        let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k,v)).collect();
+        vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let mut price_max = 10;
+        let mut name_max = 0;
+        for item in &vec {
+            price_max = max(price_max, item.1.to_string().len());
+            name_max = max(name_max, item.0.len());
+        }
+        println!("Totals by tag: {:.2}", total);
+        for item in vec {
+            println!("{:>price_max$.2} | {:<name_max$}", item.1, item.0);
+        }
     }
 }
 impl Itemizer for FileItemizer {

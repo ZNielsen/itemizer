@@ -55,6 +55,7 @@ fn main() {
         // writeln!(done_fp, "{}", entry_path).unwrap();
     }
 
+    itemizer.print_totals();
     itemizer.save_to_disk();
 }
 
