@@ -47,7 +47,7 @@ EXCLUDE
 
 In the example, `Bubbly Water` does not have any tags, while `Onions` is tagged
 with both `veggies` and `produce`; all instances of `Onions` will be counted
-towards the totals of both lists. `Pop Tarts` has been tagged by the special
+towards the totals of both lists. `Pop Tarts` has been tagged with the special
 `EXCLUDE` tag; it will not be included in any list, including the top level
 monthly total.
 
