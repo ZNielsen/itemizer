@@ -15,7 +15,8 @@ fn main() {
     let image_dir = get_env("ITEMIZER_IMAGE_DIR");
     let done_file = get_env("ITEMIZER_IMAGE_DONE_FILE");
 
-    let itemizer = FileItemizer::new();
+    let mut itemizer = FileItemizer::new();
+    // let mut itemizer = DatabaseItemizer::new();
     for entry in std::fs::read_dir(image_dir).unwrap() {
         let entry = entry.unwrap();
         let entry_path = entry.path();

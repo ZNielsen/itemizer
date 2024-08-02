@@ -6,12 +6,13 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::cmp::max;
+use std::ops::{Deref, DerefMut};
 use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
 
 pub trait Itemizer {
-    fn process_purchase(&self, code: u64, desc: String, price: f64);
+    fn process_purchase(&mut self, code: u64, desc: String, price: f64);
 }
 pub struct DatabaseItemizer {
     pub db: Connection,
@@ -74,6 +75,7 @@ pub fn split_tags(tags: &str) -> Vec<String> {
         .collect()
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 impl ItemRule {
     pub fn new() -> Self {
@@ -212,7 +214,7 @@ impl DatabaseItemizer {
     }
 }
 impl Itemizer for DatabaseItemizer {
-    fn process_purchase(&self, code: u64, desc: String, price: f64) {
+    fn process_purchase(&mut self, code: u64, desc: String, price: f64) {
         let mut stmt = self.db.prepare("SELECT item_id FROM items WHERE code = ?1").unwrap();
         let item_id = match stmt.query_row(params![code], |row| row.get(0)) {
             Ok(id) => id,
@@ -318,6 +320,17 @@ impl Purchases {
         Purchases(v)
     }
 }
+impl Deref for Purchases {
+    type Target = Vec<Purchase>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for Purchases {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl FileItemizer {
     pub fn new() -> Self {
@@ -327,13 +340,14 @@ impl FileItemizer {
         }
     }
 
-    pub fn to_file(&self, file_path: &Path) {
+    pub fn save_to_files(&self) {
+        // Purchases File
+        let purchases_path = get_env("ITEMIZER_PURCHASES_FILE");
         let (price_max, name_max, tags_max) = self.get_max_lengths();
-
         let mut file = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(file_path)
+            .open(purchases_path)
             .unwrap();
         for p in &self.purchases.0 {
             // Price | Name | Tags
@@ -341,6 +355,9 @@ impl FileItemizer {
                 p.price, p.name, p.tags.join(", "));
             file.write_all(s.as_bytes()).unwrap();
         }
+
+        // Rules File
+        let rules_path = get_env("ITEMIZER_RULES_FILE");
     }
 
     pub fn get_max_lengths(&self) -> (usize, usize, usize) {
@@ -362,7 +379,28 @@ impl FileItemizer {
     }
 }
 impl Itemizer for FileItemizer {
-    fn process_purchase(&self, code: u64, desc: String, price: f64) {
+    fn process_purchase(&mut self, code: u64, desc: String, price: f64) {
+        // Get item index
+        let idx = if self.maps.codes.contains_key(&code) {
+            self.maps.codes[&code]
+        } else if self.maps.descr.contains_key(&desc) {
+            self.maps.descr[&desc]
+        } else {
+            // TODO: Ask for manual input, append to file
+            println!("No item for code/desc/price: [{}]/[{}]/[{}]", code, desc, price);
+            println!("Inserting entry into rules file");
+            self.maps.codes.insert(code, self.maps.rules.len());
+            self.maps.descr.insert(desc.clone(), self.maps.rules.len());
+            self.maps.rules.push(ItemRule{code, desc, name: "UNKNOWN".to_owned(), tags: Vec::new(), excl: true});
+            self.maps.rules.len()-1
+        };
+
+        // Insert item into list of purchases
+        self.purchases.push(Purchase {
+            name: self.maps.rules[idx].name.clone(),
+            tags: self.maps.rules[idx].tags.clone(),
+            price,
+        });
     }
 }
 
