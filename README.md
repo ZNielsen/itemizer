@@ -1,4 +1,4 @@
-# Itemizer
+# Itemizer !! WIP - currently non-functional !!
 
 Itemizer is a receipt scanner tool designed to give insights into where our
 grocery budget is disappearing to. It will scan a directory for images, pull out
