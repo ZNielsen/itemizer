@@ -6,6 +6,7 @@
     "fredmeyer",
     "imageops",
     "rusqlite",
-    "upscaled"
+    "upscaled",
+    "winco"
   ]
 }

@@ -7,10 +7,6 @@ use tesseract::Tesseract;
 use image::imageops::FilterType;
 use image::GenericImageView;
 
-use std::fs::OpenOptions;
-use std::io::Write;
-
-
 fn main() {
     let image_dir = get_env("ITEMIZER_IMAGE_DIR");
     let done_file = get_env("ITEMIZER_IMAGE_DONE_FILE");
@@ -53,11 +49,13 @@ fn main() {
             itemizer.process_purchase(code, desc, price)
         }
 
-        let mut done_fp = OpenOptions::new()
-            .append(true)
-            .open(&done_file).unwrap();
-        writeln!(done_fp, "{}", entry_path).unwrap();
+        // let mut done_fp = OpenOptions::new()
+        //     .append(true)
+        //     .open(&done_file).unwrap();
+        // writeln!(done_fp, "{}", entry_path).unwrap();
     }
+
+    itemizer.save_to_disk();
 }
 
 fn resize_image(path: &str, name: String) -> String {
