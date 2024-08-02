@@ -38,7 +38,7 @@ pub struct Purchase {
     pub name: String,
     pub tags: Vec<String>,
     pub price: f64,
-    // pub date: TODO, add date of purchase? Date of process?
+    // pub date: TODO, add date of purchase? Date of process? Date of image file?
     pub code: Option<u64>, // For looking up missing name
 }
 pub struct Purchases(Vec<Purchase>);
