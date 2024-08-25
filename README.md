@@ -51,6 +51,21 @@ towards the totals of both lists. `Pop Tarts` has been tagged with the special
 `EXCLUDE` tag; it will not be included in any list, including the top level
 monthly total.
 
+
+### New Items
+OCR'd content that `itemizer` does not recognize will automatically be added to the rules file to
+be processed by the user. An example entry is shown below. By default, entries are added with a
+name of `UNKNOWN` and the `EXCLUDE` tag applied.
+```
+85313200796
+FRT BAR APL/FI
+UNKNOWN
+EXCLUDE
+```
+
+The main reason for directly adding to the file in this way is so the user does not have to
+manually copy/paste or transcribe the UPC code and Description.
+
 ## Code Stuff
 
 ### License
