@@ -12,6 +12,8 @@ use clap::{Parser, Subcommand};
 
 use std::collections::HashMap;
 use std::cmp::max;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -39,7 +41,7 @@ fn main() {
 
 fn parse_files(mut itemizer: impl Itemizer) {
     let image_dir = get_env("ITEMIZER_IMAGE_DIR");
-    let _done_file = get_env("ITEMIZER_IMAGE_DONE_FILE");
+    let done_file = get_env("ITEMIZER_IMAGE_DONE_FILE");
 
     for entry in std::fs::read_dir(image_dir).unwrap() {
         let entry = entry.unwrap();
@@ -84,10 +86,10 @@ fn parse_files(mut itemizer: impl Itemizer) {
             itemizer.process_purchase(code, desc, price)
         }
 
-        // let mut done_fp = OpenOptions::new()
-        //     .append(true)
-        //     .open(&done_file).unwrap();
-        // writeln!(done_fp, "{}", entry_path).unwrap();
+        let mut done_fp = OpenOptions::new()
+            .append(true)
+            .open(&done_file).unwrap();
+        writeln!(done_fp, "{}", entry_path).unwrap();
     }
 
     print_totals(itemizer.purchases());
