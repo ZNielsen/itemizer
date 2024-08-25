@@ -111,9 +111,9 @@ impl Receipt {
         };
 
         let pattern = match store {
-            ReceiptType::Costco => r"(\d+) ([\w -]+) (\d?\d\[.,]\d\d)",
-            ReceiptType::FredMeyer => r"(\d+) ([\w <+]+) (\d?\d\[.,]\d\d) F",
-            ReceiptType::WinCo => r"([\w ,/-]+) (\d+) (\d?\d\[.,]\d\d)",
+            ReceiptType::Costco => r"(\d+) ([\w -]+) (\d?\d[.,]\d\d)",
+            ReceiptType::FredMeyer => r"(\d+) ([\w <+]+) (\d?\d[.,]\d\d) F",
+            ReceiptType::WinCo => r"([\w ,/-]+) (\d+) (\d?\d[.,]\d\d)",
         };
         let re = Regex::new(pattern).unwrap();
 
@@ -130,17 +130,19 @@ impl Receipt {
             match self.store {
                 ReceiptType::Costco |
                 ReceiptType::FredMeyer => {
+                    let price = caps[3].replace(",", ".");
                     Some((
                         caps[1].parse().unwrap(),
                         caps[2].to_owned(),
-                        caps[3].parse().unwrap()
+                        price.parse().unwrap()
                     ))
                 },
                 ReceiptType::WinCo => {
+                    let price = caps[3].replace(",", ".");
                     Some((
                         caps[2].parse().unwrap(),
                         caps[1].to_owned(),
-                        caps[3].parse().unwrap()
+                        price.parse().unwrap()
                     ))
                 },
             }
