@@ -1,27 +1,56 @@
-# Itemizer !! WIP - currently non-functional !!
+# Itemizer
 
 Itemizer is a receipt scanner tool designed to give insights into where our
 grocery budget is disappearing to. It will scan a directory for images, pull out
-the individual items on the receipt, then log them to a sqlite database for
-later use.
+the individual items on the receipt, then log them to a file for later use.
+
+Supports receipts from: **Fred Meyer**, **Costco**, **WinCo**.
 
 ## Setup
 
-Requires the following environment variables to be set:
-- `ITEMIZER_IMAGE_DIR` - The input directory
-- `ITEMIZER_UPSCALED_IMAGE_DIR` - Where to store upscaled images
-- `ITEMIZER_IMAGE_DONE_FILE` - A file to track which receipts are done to avoid duplicate effort/entries
-- `ITEMIZER_RULES_FILE` - The 'rules' file, see below
-- `ITEMIZER_DB` - Location for the database file, when using database mode
-- `ITEMIZER_PURCHASES_FILE` - Location for the purchases file, when using file mode
+### Quick Start
 
-The `ITEMIZER_RULES_FILE` is structured as blocks of text describing a store item and its properties.
-The order and type of each item is important:
+```sh
+# Initialize config and data directories
+itemizer init
+
+# Edit the config file to set your paths
+$EDITOR ~/.config/itemizer/config.toml
+```
+
+This creates a config file at `~/.config/itemizer/config.toml` (or `$XDG_CONFIG_HOME/itemizer/config.toml`) and default data directories under `~/.local/share/itemizer/`.
+
+### Config
+
+The config file contains paths for all data:
+
+```toml
+image_dir = "/path/to/receipt/images"
+upscaled_image_dir = "/path/to/upscaled/images"
+done_file = "/path/to/done"
+rules_file = "/path/to/rules"
+purchases_file = "/path/to/purchases"
+```
+
+All paths can be overridden with environment variables for backward compatibility:
+- `ITEMIZER_IMAGE_DIR`
+- `ITEMIZER_UPSCALED_IMAGE_DIR`
+- `ITEMIZER_IMAGE_DONE_FILE`
+- `ITEMIZER_RULES_FILE`
+- `ITEMIZER_PURCHASES_FILE`
+
+### Image Naming
+
+Receipt images must include the date in the filename as `YYYY-MM-DD` (e.g., `2024-07-21-costco.jpg`).
+
+### Rules File
+
+The rules file maps receipt line items to user-friendly names and tags. Each entry is a block of 3-4 lines separated by blank lines:
 
 - UPC code - integer
-- Description, as it appears on the receipt - string>
-- Name, as the user would like to refer to the product - string>
-- Tags, (optional) for sorting, comma separated - string>
+- Description, as it appears on the receipt - string
+- Name, as the user would like to refer to the product - string
+- Tags, (optional) for sorting, comma separated - string
 
 Example:
 ```
@@ -51,11 +80,10 @@ towards the totals of both lists. `Pop Tarts` has been tagged with the special
 `EXCLUDE` tag; it will not be included in any list, including the top level
 monthly total.
 
-
 ### New Items
 OCR'd content that `itemizer` does not recognize will automatically be added to the rules file to
-be processed by the user. An example entry is shown below. By default, entries are added with a
-name of `UNKNOWN` and the `EXCLUDE` tag applied.
+be processed by the user. By default, entries are added with a name of `UNKNOWN` and the `EXCLUDE` tag applied.
+
 ```
 85313200796
 FRT BAR APL/FI
@@ -65,6 +93,20 @@ EXCLUDE
 
 The main reason for directly adding to the file in this way is so the user does not have to
 manually copy/paste or transcribe the UPC code and Description.
+
+## Usage
+
+```sh
+# Scan receipt images (default command)
+itemizer
+itemizer scan
+
+# Display current month's totals
+itemizer display
+
+# Display previous month's totals
+itemizer display --offset -1
+```
 
 ## Code Stuff
 

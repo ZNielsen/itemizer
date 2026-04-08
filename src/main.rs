@@ -1,10 +1,14 @@
 // © Zach Nielsen 2024
 
+mod config;
 mod data;
+
+use crate::config::Config;
 use crate::data::*;
 
+use anyhow::{Context, Result};
 use tesseract::Tesseract;
-use chrono::{NaiveDate, Local, Datelike};
+use chrono::{NaiveDate, Local, Datelike, Months};
 use image::imageops::FilterType;
 use image::GenericImageView;
 use regex::Regex;
@@ -12,7 +16,7 @@ use clap::{Parser, Subcommand};
 
 use std::collections::HashMap;
 use std::cmp::max;
-use std::fs::OpenOptions;
+use std::fs::{DirEntry, OpenOptions};
 use std::io::Write;
 
 #[derive(Parser, Debug)]
@@ -23,111 +27,164 @@ struct Cli {
 }
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Scan receipt images and record purchases
+    Scan,
+    /// Display totals for a month
     Display {
         #[arg(short, long, default_value_t = 0)]
         offset: i8,
     },
+    /// Initialize config with default values
+    Init,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    let itemizer = FileItemizer::new();
 
     match &cli.command {
-        Some(Commands::Display { offset }) => display_month(itemizer, offset),
-        None => parse_files(itemizer),
+        Some(Commands::Init) => Config::init(),
+        Some(Commands::Display { offset }) => {
+            let config = Config::load()?;
+            let itemizer = FileItemizer::new(config)?;
+            display_month(&itemizer, offset)
+        }
+        Some(Commands::Scan) | None => {
+            let config = Config::load()?;
+            let itemizer = FileItemizer::new(config)?;
+            parse_files(itemizer)
+        }
     }
 }
 
-fn parse_files(mut itemizer: impl Itemizer) {
-    let image_dir = get_env("ITEMIZER_IMAGE_DIR");
-    let done_file = get_env("ITEMIZER_IMAGE_DONE_FILE");
+fn process_single_image(entry: &DirEntry, itemizer: &mut FileItemizer) -> Result<()> {
+    let entry_path = entry.path();
+    let entry_path_str = entry_path.to_str()
+        .context("Image path is not valid UTF-8")?;
 
-    for entry in std::fs::read_dir(image_dir).unwrap() {
-        let entry = entry.unwrap();
-        let entry_path = entry.path();
-        if entry.file_type().unwrap().is_dir() {
-            // TODO: Recurse into directory?
+    if image_done(entry_path_str, &itemizer.config.done_file)? {
+        println!("Receipt already done, skipping: {}", entry_path_str);
+        return Ok(());
+    }
+
+    // Upscale image
+    let entry_name = entry.file_name().into_string()
+        .map_err(|_| anyhow::anyhow!("Filename is not valid UTF-8"))?;
+    let resized_path = resize_image(entry_path_str, &entry_name, &itemizer.config)?;
+
+    // OCR image
+    let tess = Tesseract::new(None, Some("eng"))
+        .map_err(|e| anyhow::anyhow!("Failed to initialize Tesseract: {}", e))?;
+    let mut tess = tess.set_image(&resized_path)
+        .map_err(|e| anyhow::anyhow!("Failed to set image for OCR: {}", e))?;
+    let text = tess.get_text()
+        .map_err(|e| anyhow::anyhow!("OCR failed: {}", e))?;
+
+    // Clean up upscaled image
+    if let Err(e) = std::fs::remove_file(&resized_path) {
+        eprintln!("Warning: could not clean up upscaled image {}: {}", resized_path, e);
+    }
+
+    // Get the date from the file name
+    let date_re = Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap();
+    let file_name = entry.file_name();
+    let file_name_str = file_name.to_str()
+        .context("Filename is not valid UTF-8")?;
+    let date_str = date_re.find(file_name_str)
+        .with_context(|| format!("No date found in filename: {}", file_name_str))?
+        .as_str();
+    let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+        .with_context(|| format!("Invalid date in filename: {}", date_str))?;
+    itemizer.set_date(date);
+
+    // Parse Receipt
+    let receipt = Receipt::new(text)?;
+    for line in receipt.text.lines() {
+        let Some((code, desc, price)) = receipt.get_fields(line) else {
+            continue;
+        };
+        itemizer.process_purchase(code, desc, price);
+    }
+
+    // Mark as done
+    let mut done_fp = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&itemizer.config.done_file)
+        .context("Failed to open done file for writing")?;
+    writeln!(done_fp, "{}", entry_path_str)?;
+
+    Ok(())
+}
+
+fn parse_files(mut itemizer: FileItemizer) -> Result<()> {
+    // Collect and sort entries by filename for deterministic date-ordered processing
+    let mut entries: Vec<DirEntry> = std::fs::read_dir(&itemizer.config.image_dir)
+        .with_context(|| format!("Failed to read image directory: {}", itemizer.config.image_dir.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in &entries {
+        if let Err(e) = process_single_image(entry, &mut itemizer) {
+            eprintln!("Error processing {:?}: {:?}", entry.path(), e);
             continue;
         }
-        let entry_path = entry_path.as_os_str().to_str().unwrap();
-        if image_done(entry_path) {
-            println!("Receipt already done, skipping: {}", entry_path);
-            continue;
-        }
-
-        // Upscale image
-        let entry_name = entry.file_name().into_string().unwrap();
-        let resized_path = resize_image(entry_path, entry_name);
-
-        // OCR image
-        let tess = Tesseract::new(None, Some("eng")).unwrap();
-        let mut tess = tess.set_image(&resized_path).unwrap();
-        // let mut tess = tess.set_image(entry_str).unwrap();
-        let text = tess.get_text().unwrap();
-        // println!("Recognized text:\n{}", text);
-        // TODO: Delete upscaled image
-
-
-        // Get the date in the file name
-        let date_re = Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap();
-        let file_name = entry.file_name();
-        let date_str = date_re.find(file_name.to_str().unwrap()).unwrap().as_str();
-        itemizer.set_date(NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap());
-
-        // Parse Receipt
-        let receipt = Receipt::new(text);
-        for line in receipt.text.lines() {
-            let Some((code, desc, price)) = receipt.get_fields(line) else {
-                continue;
-            };
-
-            // println!("Checking for [{}], [{}]", code, desc);
-            itemizer.process_purchase(code, desc, price)
-        }
-
-        let mut done_fp = OpenOptions::new()
-            .append(true)
-            .open(&done_file).unwrap();
-        writeln!(done_fp, "{}", entry_path).unwrap();
     }
 
     print_totals(itemizer.purchases());
-    itemizer.save_to_disk();
+    itemizer.save_to_disk()?;
+    Ok(())
 }
 
-fn resize_image(path: &str, name: String) -> String {
+fn resize_image(path: &str, name: &str, config: &Config) -> Result<String> {
     println!("About to open: {:?}", path);
-    let resized_path =
-        [get_env("ITEMIZER_UPSCALED_IMAGE_DIR"), name].join("/");
-    if std::fs::metadata(&resized_path).is_ok() {
-        println!("Already upscaled [{}], moving on", resized_path);
+    let resized_path = config.upscaled_image_dir.join(name);
+    let resized_path_str = resized_path.to_str()
+        .context("Upscaled image path is not valid UTF-8")?
+        .to_owned();
+
+    if resized_path.exists() {
+        println!("Already upscaled [{}], moving on", resized_path_str);
     } else {
-        let img = image::open(&path).unwrap();
+        let img = image::open(path)
+            .with_context(|| format!("Failed to open image: {}", path))?;
         let (width, height) = img.dimensions();
-        println!("About to upscale: {:?}", &path);
+        println!("About to upscale: {:?}", path);
         let upscale = 1.5;
         let new_width = (width as f32 * upscale) as u32;
         let new_height = (height as f32 * upscale) as u32;
-        // Resize the image using the Lanczos3 filter
         let resized_img = image::imageops::resize(&img, new_width, new_height, FilterType::Lanczos3);
-        println!("About to save upscaled to: {}", &resized_path);
-        resized_img.save(&resized_path).unwrap();
+        println!("About to save upscaled to: {}", &resized_path_str);
+        resized_img.save(&resized_path)
+            .with_context(|| format!("Failed to save upscaled image: {}", resized_path_str))?;
         println!("Image has been upscaled and saved successfully.");
     }
-    resized_path
+    Ok(resized_path_str)
 }
 
-fn display_month(itemizer: impl Itemizer, offset: &i8) {
-    let month = Local::now().month() as i8 + offset;
-    let mut keep_list: Purchases = data::Purchases(Vec::new());
-    for purchase in itemizer.purchases_iter() {
-        if purchase.date.month0() == month as u32 - 1 {
-            keep_list.push(purchase.clone());
+fn display_month(itemizer: &FileItemizer, offset: &i8) -> Result<()> {
+    let now = Local::now().naive_local().date();
+    let target = if *offset >= 0 {
+        now.checked_add_months(Months::new(*offset as u32))
+    } else {
+        now.checked_sub_months(Months::new(offset.unsigned_abs() as u32))
+    }.context("Date offset out of range")?;
+
+    let target_year = target.year();
+    let target_month = target.month();
+
+    println!("Showing: {} {}", target.format("%B"), target_year);
+
+    let mut keep_list = Purchases(Vec::new());
+    for p in &itemizer.purchases().0 {
+        if p.date.year() == target_year && p.date.month() == target_month {
+            keep_list.push(p.clone());
         }
     }
 
     print_totals(&keep_list);
+    Ok(())
 }
 
 
@@ -139,6 +196,7 @@ fn print_totals(purchases: &Purchases) {
     print_totals_by_tag(purchases);
     println!("\n===========================================================\n");
 }
+
 pub fn print_totals_by_name(purchases: &Purchases) {
     let mut total: f64 = 0.0;
     let mut tot: HashMap<&str, f64> = HashMap::new();
@@ -148,8 +206,8 @@ pub fn print_totals_by_name(purchases: &Purchases) {
         total += p.price;
     }
 
-    let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k,v)).collect();
-    vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k, v)).collect();
+    vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut price_max = 10;
     let mut name_max = 0;
@@ -162,6 +220,7 @@ pub fn print_totals_by_name(purchases: &Purchases) {
         println!("{:>price_max$.2} | {:<name_max$}", item.1, item.0);
     }
 }
+
 pub fn print_totals_by_tag(purchases: &Purchases) {
     let mut total: f64 = 0.0;
     let mut tot: HashMap<&str, f64> = HashMap::new();
@@ -171,14 +230,14 @@ pub fn print_totals_by_tag(purchases: &Purchases) {
         }
 
         for tag in &p.tags {
-            if tag == "" { continue; }
-            tot.entry(&tag).and_modify(|val| *val += p.price).or_insert(p.price);
+            if tag.is_empty() { continue; }
+            tot.entry(tag).and_modify(|val| *val += p.price).or_insert(p.price);
             total += p.price;
         }
     }
 
-    let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k,v)).collect();
-    vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let mut vec: Vec<(&str, f64)> = tot.iter().map(|(&k, &v)| (k, v)).collect();
+    vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut price_max = 10;
     let mut name_max = 0;
@@ -191,4 +250,3 @@ pub fn print_totals_by_tag(purchases: &Purchases) {
         println!("{:>price_max$.2} | {:<name_max$}", item.1, item.0);
     }
 }
-
